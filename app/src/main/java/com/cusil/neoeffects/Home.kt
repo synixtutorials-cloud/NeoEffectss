@@ -85,7 +85,7 @@ class QuickDef(val key: String, val label: String, val icon: ImageVector)
 val QUICK = listOf(
     QuickDef("quality", "Quality\nBoost", Icons.Outlined.HighQuality),
     QuickDef("removebg", "Remove\nBG", Icons.Outlined.ContentCut),
-    QuickDef("import_fx", "Import\nEffects", Icons.Outlined.AutoAwesome),
+    QuickDef("templates", "Templates", Icons.Outlined.GridView),
     QuickDef("import_project", "Import\nProject", Icons.Outlined.Folder),
     QuickDef("color", "Color\nGrading", Icons.Outlined.Palette),
     QuickDef("tutorial", "Tutorial", Icons.Outlined.School)

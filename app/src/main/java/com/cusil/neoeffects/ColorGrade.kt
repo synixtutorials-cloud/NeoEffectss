@@ -217,7 +217,7 @@ fun GradeCard(title: String, modifier: Modifier = Modifier, trailing: @Composabl
 
 @Composable
 fun ColorGradePanel(
-    clip: Clip?,
+    clip: Item?,
     library: List<NeoEffect>,
     undo: UndoStack,
     bypass: Boolean,

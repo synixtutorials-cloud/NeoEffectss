@@ -88,3 +88,28 @@ fun shareBitmap(ctx: Context, bmp: Bitmap, name: String, png: Boolean) {
     } catch (e: Exception) {
     }
 }
+
+fun saveVideoToGallery(ctx: Context, src: java.io.File, name: String): String {
+    return try {
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val v = android.content.ContentValues()
+            v.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name + ".mp4")
+            v.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+            v.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Movies/NEOeffects")
+            val uri = ctx.contentResolver.insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, v)
+            if (uri == null) {
+                "Could not create the file"
+            } else {
+                ctx.contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
+                "Saved to Movies/NEOeffects/" + name + ".mp4"
+            }
+        } else {
+            val dir = ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES) ?: ctx.filesDir
+            val f = java.io.File(dir, name + ".mp4")
+            src.copyTo(f, true)
+            "Saved to " + f.absolutePath
+        }
+    } catch (e: Exception) {
+        "Save failed: " + (e.message ?: "unknown error")
+    }
+}

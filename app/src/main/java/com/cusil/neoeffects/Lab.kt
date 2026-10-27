@@ -218,7 +218,7 @@ fun LabScreen(effects: MutableList<NeoEffect>, initial: NeoEffect?, onBack: () -
             }
         }
         item { Text("Library (" + effects.size + ")  ·  tap Test to preview, Edit to load its JSON", color = Color(0xFF9A9AB0), fontSize = 12.sp) }
-        items(effects.toList()) { e ->
+        items(effects.filter { it.shader.isNotBlank() }) { e ->
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A2A))

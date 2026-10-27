@@ -214,25 +214,6 @@ fun RowCard(title: String, sub: String, onClick: () -> Unit) {
 }
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
-    val ctx = LocalContext.current
-    val ver = try {
-        ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "?"
-    } catch (e: Exception) {
-        "?"
-    }
-    Column(Modifier.fillMaxSize()) {
-        TopBar("Settings", onBack)
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            RowCard("App version", ver) { }
-            RowCard("Update alerts", "Coming soon") { }
-            RowCard("Cloud backup", "Coming soon") { }
-            Text("NEOeffects · Edit · Create · Inspire", color = NC.sub, fontSize = 12.sp)
-        }
-    }
-}
-
-@Composable
 fun TutorialScreen(onBack: () -> Unit) {
     val steps = listOf(
         "1. Create a project" to "Tap New Project, pick the aspect ratio, frame rate and resolution, then Create Project.",

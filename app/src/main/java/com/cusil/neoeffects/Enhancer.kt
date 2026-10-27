@@ -2,7 +2,10 @@
 
 package com.cusil.neoeffects
 
+import android.content.Context
 import android.graphics.Bitmap
+import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -194,6 +197,10 @@ fun EnhancerScreen(onBack: () -> Unit, onPro: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf("") }
     var showPro by remember { mutableStateOf(false) }
+    var videoUri by remember { mutableStateOf<Uri?>(null) }
+    var progress by remember { mutableStateOf(0f) }
+    var videoDone by remember { mutableStateOf(false) }
+    val cancel = remember { AtomicBoolean(false) }
 
     val imgPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -217,12 +224,18 @@ fun EnhancerScreen(onBack: () -> Unit, onPro: () -> Unit) {
                 val b = withContext(Dispatchers.Default) { videoFirstFrame(ctx, uri) }
                 before = b
                 after = null
+                videoUri = uri
+                videoDone = false
                 msg = if (b == null) "Could not read that video" else "Video loaded."
             }
         }
     }
 
-    val target = if (quality == 0) 2048 else 3840
+    val target = when (quality) {
+        0 -> 2048
+        1 -> 3840
+        else -> 7680
+    }
     val bf = before
     val outW: Int
     val outH: Int
@@ -308,7 +321,7 @@ fun EnhancerScreen(onBack: () -> Unit, onPro: () -> Unit) {
                     )
                 }
                 if (busy) {
-                    Text("Enhancing...", color = Color.White, modifier = Modifier.align(Alignment.Center).background(Color(0xCC000000)).padding(12.dp))
+                    Text(if (tab == 0) "Enhancing... " + (progress * 100).toInt() + "%   (tap to cancel)" else "Enhancing...", color = Color.White, modifier = Modifier.align(Alignment.Center).clickable { cancel.set(true) }.background(Color(0xCC000000)).padding(12.dp))
                 }
             }
 
@@ -345,7 +358,7 @@ fun EnhancerScreen(onBack: () -> Unit, onPro: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OptionBox(quality == 0, Modifier.weight(1f).height(48.dp), { quality = 0 }) { Text("2K (HD)", color = Color.White, fontSize = 12.sp) }
                     OptionBox(quality == 1, Modifier.weight(1f).height(48.dp), { quality = 1 }) { Text("4K (Ultra HD)", color = Color.White, fontSize = 12.sp) }
-                    OptionBox(false, Modifier.weight(1f).height(48.dp), { showPro = true }) { Text("8K  👑", color = NC.sub, fontSize = 12.sp) }
+                    OptionBox(quality == 2, Modifier.weight(1f).height(48.dp), { quality = 2 }) { Text("8K", color = Color.White, fontSize = 12.sp) }
                 }
             }
             GradeCard("Processing Strength", trailing = { Text((strength * 100).toInt().toString() + "%", color = NC.red, fontWeight = FontWeight.Bold) }) {
@@ -370,7 +383,7 @@ fun EnhancerScreen(onBack: () -> Unit, onPro: () -> Unit) {
                     if (tab == 1) {
                         if (bf == null) "Select a photo to see the output size." else "" + outW + " × " + outH + " px · usually a few seconds"
                     } else {
-                        "Video enhancement needs on-device AI models. Coming soon."
+                        "Video is re-rendered frame by frame with the same filters (audio kept). It can take a few minutes. The final size is limited by what your phone encoder supports."
                     },
                     color = NC.sub, fontSize = 12.sp
                 )
@@ -383,7 +396,7 @@ fun EnhancerScreen(onBack: () -> Unit, onPro: () -> Unit) {
                 onClick = { if (tab == 1) imgPicker.launch(arrayOf("image/*")) else vidPicker.launch(arrayOf("video/*")) },
                 modifier = Modifier.weight(1f).height(52.dp)
             ) { Text(if (tab == 1) "Select Photo" else "Select Video", color = Color.White) }
-            if (after != null) {
+            if (after != null && tab == 1) {
                 Button(
                     onClick = {
                         val a = after
@@ -397,7 +410,35 @@ fun EnhancerScreen(onBack: () -> Unit, onPro: () -> Unit) {
                     onClick = {
                         val src = before
                         if (tab == 0) {
-                            msg = "Video enhancement is coming soon. Image Enhancement works now."
+                            val vu = videoUri
+                            if (vu == null) {
+                                msg = "Select a video first"
+                            } else {
+                                scope.launch {
+                                    busy = true
+                                    msg = ""
+                                    progress = 0f
+                                    cancel.set(false)
+                                    videoDone = false
+                                    val res = withContext(Dispatchers.Default) {
+                                        enhanceVideo(ctx, vu, target, mode, strength, tSharp, tDenoise, tColor, tHdr, { p -> progress = p }, cancel)
+                                    }
+                                    busy = false
+                                    val f = res.first
+                                    if (f == null) {
+                                        msg = res.second
+                                    } else {
+                                        val frame = withContext(Dispatchers.Default) { videoFirstFrame(ctx, Uri.fromFile(f)) }
+                                        msg = withContext(Dispatchers.IO) { saveVideoToGallery(ctx, f, "NEO_enhanced_" + System.currentTimeMillis()) }
+                                        f.delete()
+                                        if (frame != null) {
+                                            after = frame
+                                            split = 0.5f
+                                        }
+                                        videoDone = true
+                                    }
+                                }
+                            }
                         } else if (src == null) {
                             msg = "Select a photo first"
                         } else {
@@ -426,4 +467,56 @@ fun EnhancerScreen(onBack: () -> Unit, onPro: () -> Unit) {
         }
     }
     if (showPro) ProDialog { showPro = false }
+}
+
+
+fun enhanceVideo(
+    ctx: Context, uri: Uri, targetLong: Int, mode: Int, s: Float,
+    sharp: Boolean, denoise: Boolean, color: Boolean, hdr: Boolean,
+    onProgress: (Float) -> Unit, cancel: AtomicBoolean
+): Pair<File?, String> {
+    val pr = probeMedia(ctx, uri) ?: return Pair(null, "Could not read the video")
+    val d = videoSize(ctx, uri) ?: return Pair(null, "Could not read the video size")
+    val f = maxOf(1f, targetLong.toFloat() / maxOf(d.first, d.second).toFloat())
+    var w = maxOf(2, (d.first * f).toInt())
+    var h = maxOf(2, (d.second * f).toInt())
+    w -= w % 2
+    h -= h % 2
+    var fps = 30
+    val r = MediaMetadataRetriever()
+    try {
+        r.setDataSource(ctx, uri)
+        val v = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)?.toFloatOrNull()
+        if (v != null && v > 1f) fps = v.toInt().coerceIn(15, 60)
+    } catch (e: Exception) {
+    } finally {
+        try { r.release() } catch (e: Exception) { }
+    }
+    val e = try {
+        NeoFx.parse(ctx.assets.open("effects/enhance.neofx").bufferedReader().use { it.readText() }, true)
+    } catch (ex: Exception) {
+        return Pair(null, "Enhance filter missing")
+    }
+    val inst = FxInst(e)
+    val satBase = when (mode) {
+        1 -> 1.18f
+        2 -> 1.06f
+        else -> 1.12f
+    }
+    inst.values["sharpen"] = if (sharp) (if (mode == 1) 0.4f + 0.8f * s else 0.6f + 1.0f * s) else 0f
+    inst.values["denoise"] = if (denoise) 0.7f * s else 0f
+    inst.values["saturation"] = if (color) 1f + (satBase - 1f) * (0.4f + s) else 1f
+    inst.values["contrast"] = if (color) 1f + 0.06f * s else 1f
+    inst.values["hdr"] = if (hdr) 0.7f * s else 0f
+    val p = Project("enh_" + System.currentTimeMillis(), "enhance")
+    p.width = w
+    p.height = h
+    p.fps = fps
+    p.bgMode = 0
+    val c = Clip(newClipId(), uri.toString(), true, pr.durMs, pr.name)
+    c.fx.add(inst)
+    p.clips.add(c)
+    val out = File(ctx.cacheDir, "enh_" + System.currentTimeMillis() + ".mp4")
+    val res = Exporter.run(ctx, p, out, maxOf(w, h), onProgress, cancel)
+    return if (res.isEmpty()) Pair(out, "") else Pair(null, res)
 }

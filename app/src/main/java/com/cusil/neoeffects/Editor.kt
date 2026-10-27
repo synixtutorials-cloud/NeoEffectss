@@ -148,6 +148,10 @@ class UndoStack(private val project: Project, private val lib: List<NeoEffect>) 
         project.clips.clear()
         project.clips.addAll(p2.clips)
         project.playheadMs = p2.playheadMs
+        project.layers.clear()
+        project.layers.addAll(p2.layers)
+        project.beats.clear()
+        project.beats.addAll(p2.beats)
     }
 
     fun undo(): Boolean {
@@ -164,25 +168,6 @@ class UndoStack(private val project: Project, private val lib: List<NeoEffect>) 
         restore(redos.removeAt(redos.size - 1))
         sync()
         return true
-    }
-}
-
-@Composable
-fun ChainFeeder(project: Project, gl: GlEngine, bypassGrade: Boolean) {
-    val ph = project.playheadMs
-    val loc = project.clipAt(ph)
-    val chain = ArrayList<Pass>()
-    if (loc != null) {
-        for (inst in loc.first.fx) {
-            if (bypassGrade && inst.effect.id == "color_grade") continue
-            val vals = HashMap<String, Float>()
-            for (p in inst.effect.params) vals[p.id] = inst.valueAt(p, loc.second)
-            chain.add(Pass(inst.effect, vals))
-        }
-    }
-    SideEffect {
-        gl.chain = chain
-        gl.timeSec = ph / 1000f
     }
 }
 
@@ -211,7 +196,7 @@ fun ToolPill(icon: ImageVector, label: String, enabled: Boolean = true, onClick:
 }
 
 @Composable
-fun ParamControl(inst: FxInst, p: NeoParam, clip: Clip, project: Project, undo: UndoStack, modifier: Modifier = Modifier) {
+fun ParamControl(inst: FxInst, p: NeoParam, clip: Item, project: Project, undo: UndoStack, modifier: Modifier = Modifier) {
     val off = (project.playheadMs - project.startOf(clip)).coerceIn(0L, clip.durMs)
     val v = inst.valueAt(p, off)
     val ks = inst.keys[p.id]
@@ -253,338 +238,6 @@ fun ParamControl(inst: FxInst, p: NeoParam, clip: Clip, project: Project, undo: 
 }
 
 @Composable
-fun EditorScreen(
-    project: Project,
-    library: List<NeoEffect>,
-    startTab: String,
-    onExit: () -> Unit,
-    onPro: () -> Unit
-) {
-    val ctx = LocalContext.current
-    val gl = remember { GlEngine() }
-    val engine = remember { PlaybackEngine(ctx, project, gl) }
-    val undo = remember { UndoStack(project, library) }
-    val scope = rememberCoroutineScope()
-    var selectedId by remember { mutableStateOf(project.clips.firstOrNull()?.id ?: -1L) }
-    var tab by remember { mutableStateOf(startTab) }
-    var msg by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf("") }
-    var shaderErr by remember { mutableStateOf("") }
-    var zoom by remember { mutableStateOf(40f) }
-    var full by remember { mutableStateOf(false) }
-    var menuOpen by remember { mutableStateOf(false) }
-    var hiddenTracks by remember { mutableStateOf(setOf<Int>()) }
-    var activeFx by remember { mutableStateOf("") }
-    var bypass by remember { mutableStateOf(false) }
-
-    remember {
-        gl.onSurface = { s -> engine.onSurface(s) }
-        gl.onError = { m -> shaderErr = m }
-        0
-    }
-
-    SideEffect {
-        gl.canvasAspect = project.width.toFloat() / project.height.toFloat()
-        gl.bgMode = project.bgMode
-        gl.maxSide = when (project.previewQ) {
-            0 -> 720
-            2 -> 1920
-            else -> 1280
-        }
-        gl.hidden = hiddenTracks.contains(0)
-    }
-    LaunchedEffect(project.bgUri, project.bgMode) {
-        if (project.bgMode == 4 && project.bgUri.isNotEmpty()) {
-            val b = withContext(Dispatchers.IO) {
-                try {
-                    loadBitmap(ctx, Uri.parse(project.bgUri), 1024)
-                } catch (e: Exception) {
-                    null
-                }
-            }
-            gl.setBgBitmap(b)
-        } else {
-            gl.setBgBitmap(null)
-        }
-    }
-    LaunchedEffect(project.autosave) {
-        while (project.autosave) {
-            delay(30000L)
-            try { ProjectStore.save(ctx, project) } catch (e: Exception) { }
-        }
-    }
-
-    BackHandler {
-        if (tab == "effects" || tab == "color") tab = "edit" else onExit()
-    }
-
-    val owner = LocalLifecycleOwner.current
-    DisposableEffect(owner) {
-        val obs = LifecycleEventObserver { _, ev ->
-            if (ev == Lifecycle.Event.ON_STOP) engine.pause()
-        }
-        owner.lifecycle.addObserver(obs)
-        onDispose { owner.lifecycle.removeObserver(obs) }
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            try { ProjectStore.save(ctx, project) } catch (e: Exception) { }
-            engine.releaseAll()
-        }
-    }
-    LaunchedEffect(Unit) { engine.show(project.playheadMs) }
-    LaunchedEffect(engine.playing) {
-        if (engine.playing) {
-            var last = withFrameNanos { it }
-            while (engine.playing) {
-                val now = withFrameNanos { it }
-                engine.tick((now - last) / 1_000_000L)
-                last = now
-            }
-        }
-    }
-
-    fun addUris(uris: List<Uri>) {
-        undo.push()
-        var added = false
-        for (u in uris) {
-            try {
-                ctx.contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } catch (e: Exception) {
-            }
-            val pr = probeMedia(ctx, u)
-            if (pr == null) {
-                msg = "Could not read that file"
-                continue
-            }
-            val c = Clip(newClipId(), u.toString(), pr.isVideo, pr.durMs, pr.name)
-            if (!pr.isVideo) c.outMs = 3000L
-            applyTemplate(project.templateId, c, library)
-            project.clips.add(c)
-            selectedId = c.id
-            added = true
-        }
-        if (added) engine.show(project.playheadMs)
-    }
-    val addLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        addUris(uris)
-    }
-
-    val sel = project.clips.firstOrNull { it.id == selectedId }
-    val sheet = tab == "effects" || tab == "color"
-
-    fun doSplit() {
-        undo.push()
-        if (project.splitAtPlayhead()) engine.show(project.playheadMs) else msg = "Move the playhead inside a clip first"
-    }
-    fun doDuplicate() {
-        val s = sel ?: return
-        undo.push()
-        val n = s.duplicate(newClipId(), 0L)
-        project.clips.add(project.clips.indexOf(s) + 1, n)
-        selectedId = n.id
-        engine.show(project.playheadMs)
-    }
-    fun doDelete() {
-        val s = sel ?: return
-        undo.push()
-        project.clips.remove(s)
-        selectedId = -1L
-        engine.show(project.playheadMs)
-    }
-    fun doUndo() {
-        if (undo.undo()) engine.show(project.playheadMs)
-    }
-    fun doRedo() {
-        if (undo.redo()) engine.show(project.playheadMs)
-    }
-    fun jump(dir: Int) {
-        engine.pause()
-        var t = 0L
-        val starts = ArrayList<Long>()
-        for (c in project.clips) {
-            starts.add(t)
-            t += c.durMs
-        }
-        starts.add(t)
-        val ph = project.playheadMs
-        val target = if (dir > 0) starts.firstOrNull { it > ph + 50L } ?: t else starts.lastOrNull { it < ph - 50L } ?: 0L
-        engine.show(target)
-    }
-    fun shareProject() {
-        scope.launch {
-            busy = "Packing project..."
-            val r = withContext(Dispatchers.IO) { exportNeoproj(ctx, project) }
-            busy = ""
-            msg = r
-        }
-    }
-
-    Column(Modifier.fillMaxSize().background(NC.bg)) {
-        if (!full) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconBtn(Icons.Outlined.ArrowBack, "Back", size = 36.dp) { onExit() }
-                NeoLogo(small = true)
-                Spacer(Modifier.weight(1f))
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(max = 110.dp)) {
-                    Text(
-                        project.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis
-                    )
-                    Text(project.resLabel + " · " + project.fps + "fps", color = NC.sub, fontSize = 10.sp)
-                }
-                Spacer(Modifier.weight(1f))
-                ProChip(onPro)
-                IconBtn(Icons.Outlined.Save, "Save", size = 36.dp) {
-                    ProjectStore.save(ctx, project)
-                    msg = "Saved"
-                }
-                Box {
-                    IconBtn(Icons.Outlined.MoreVert, "Menu", size = 36.dp) { menuOpen = true }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(text = { Text("Export video (coming soon)") }, onClick = {
-                            menuOpen = false
-                            msg = "Video export arrives in the next build"
-                        })
-                        DropdownMenuItem(text = { Text("Share project file (.neoproj)") }, onClick = {
-                            menuOpen = false
-                            shareProject()
-                        })
-                        DropdownMenuItem(text = { Text("Fullscreen preview") }, onClick = {
-                            menuOpen = false
-                            full = true
-                        })
-                    }
-                }
-            }
-        }
-
-        Row(Modifier.weight(1f).fillMaxWidth().heightIn(min = 150.dp)) {
-            Box(Modifier.weight(1f).fillMaxHeight().padding(6.dp).clip(RoundedCornerShape(14.dp)).background(Color.Black)) {
-                GlPreview(gl, Modifier.fillMaxSize())
-                ChainFeeder(project, gl, bypass)
-                Text(
-                    project.resLabel + "  ·  " + project.fps + "fps", color = Color.White, fontSize = 11.sp,
-                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xAA000000)).padding(horizontal = 10.dp, vertical = 4.dp)
-                )
-                Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) {
-                    IconBtn(if (full) Icons.Outlined.FullscreenExit else Icons.Outlined.Fullscreen, "Fullscreen", size = 34.dp) { full = !full }
-                }
-                if (project.clips.isEmpty()) {
-                    Text("Tap  Add Media  to start", color = NC.sub, modifier = Modifier.align(Alignment.Center))
-                }
-                if (busy.isNotEmpty()) {
-                    Text(busy, color = Color.White, modifier = Modifier.align(Alignment.Center).background(Color(0xAA000000)).padding(10.dp))
-                }
-                if (engine.error.isNotEmpty()) {
-                    Text(engine.error, color = Color(0xFFFF6B6B), fontSize = 11.sp, modifier = Modifier.align(Alignment.BottomStart).padding(8.dp))
-                }
-            }
-            if (!full) {
-                ToolRail(tab) { k ->
-                    if (k == "ai") {
-                        msg = "AI Enhance: open Home > Quality Boost"
-                    } else {
-                        tab = if (tab == k) "edit" else k
-                    }
-                }
-            }
-        }
-
-        TransportBar(
-            project, engine, undo,
-            onZoom = { zoom = if (zoom >= 120f) 20f else zoom * 2f },
-            onPrev = { jump(-1) }, onNext = { jump(1) },
-            onUndo = { doUndo() }, onRedo = { doRedo() }
-        )
-
-        if (!full) {
-            if (shaderErr.isNotEmpty()) {
-                Text(
-                    "Shader error: " + shaderErr, color = Color(0xFFFF6B6B), fontSize = 10.sp, maxLines = 2,
-                    modifier = Modifier.padding(horizontal = 12.dp)
-                )
-            }
-            TimelineBlock(
-                project, selectedId, zoom, engine.playing, hiddenTracks, sheet,
-                onSeek = { t, fast ->
-                    engine.pause()
-                    engine.show(minOf(t, project.totalMs), fast)
-                },
-                onSelectAt = { t ->
-                    val loc = project.clipAt(t)
-                    if (loc != null) selectedId = loc.first.id
-                    engine.pause()
-                    engine.show(minOf(t, project.totalMs))
-                },
-                onEye = { i ->
-                    hiddenTracks = if (hiddenTracks.contains(i)) hiddenTracks - i else hiddenTracks + i
-                },
-                onPlus = { i ->
-                    if (i == 0) addLauncher.launch(arrayOf("video/*", "image/*")) else msg = "This track type is coming soon"
-                }
-            )
-
-            if (sheet) {
-                Box(Modifier.weight(1.45f).fillMaxWidth()) {
-                    if (tab == "effects") {
-                        EffectsSheet(sel, library, project, undo, activeFx, { activeFx = it }, { tab = "edit" })
-                    } else {
-                        ColorGradePanel(sel, library, undo, bypass, { bypass = it }, { tab = "edit" })
-                    }
-                }
-            } else {
-                BottomTabs(tab) { tab = it }
-                Box(Modifier.fillMaxWidth().height(176.dp)) {
-                    when (tab) {
-                        "edit" -> EditPanel(
-                            project, selectedId, sel != null,
-                            onSelect = { c ->
-                                selectedId = c.id
-                                engine.pause()
-                                engine.show(project.startOf(c) + 1L)
-                            },
-                            onAdd = { addLauncher.launch(arrayOf("video/*", "image/*")) },
-                            onSplit = { doSplit() }, onDup = { doDuplicate() }, onDelete = { doDelete() },
-                            onSpeed = { tab = "speed" }
-                        )
-                        "filters" -> FiltersPanel(sel, library, project, undo)
-                        "adjust" -> AdjustPanel(sel, library, project, undo)
-                        "speed" -> {
-                            if (sel == null) {
-                                Text("Select a clip first.", color = NC.sub, modifier = Modifier.padding(16.dp))
-                            } else {
-                                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
-                                    TrimPanel(sel, project, engine, undo)
-                                }
-                            }
-                        }
-                        "more" -> Row(
-                            Modifier.padding(12.dp).horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            ToolPill(Icons.Outlined.Save, "Share project file") { shareProject() }
-                            ToolPill(Icons.Outlined.Fullscreen, "Fullscreen") { full = true }
-                        }
-                        else -> Text(
-                            "This tool is coming in a later build.", color = NC.sub,
-                            modifier = Modifier.padding(16.dp)
-                        )
-                    }
-                }
-            }
-            if (msg.isNotEmpty() && !sheet) {
-                Text(msg, color = NC.sub, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
-            }
-        }
-    }
-}
-
-@Composable
 fun ToolRail(tab: String, onPick: (String) -> Unit) {
     Column(
         Modifier.width(60.dp).fillMaxHeight().padding(vertical = 4.dp, horizontal = 2.dp),
@@ -612,30 +265,6 @@ fun RailItem(icon: ImageVector, label: String, selected: Boolean, onClick: () ->
     ) {
         Icon(icon, label, tint = if (selected) NC.red else Color.White, modifier = Modifier.size(22.dp))
         Text(label, color = if (selected) NC.red else Color.White, fontSize = 9.sp, maxLines = 1)
-    }
-}
-
-@Composable
-fun TransportBar(
-    project: Project, engine: PlaybackEngine, undo: UndoStack,
-    onZoom: () -> Unit, onPrev: () -> Unit, onNext: () -> Unit, onUndo: () -> Unit, onRedo: () -> Unit
-) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(fmtClock(project.playheadMs), color = Color.White, fontSize = 12.sp)
-        Text(" / " + fmtClock(project.totalMs), color = NC.sub, fontSize = 12.sp)
-        Spacer(Modifier.weight(1f))
-        IconBtn(Icons.Outlined.SkipPrevious, "Previous", size = 36.dp) { onPrev() }
-        Box(
-            Modifier.size(42.dp).clip(CircleShape).clickable { if (engine.playing) engine.pause() else engine.play() },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(if (engine.playing) Icons.Outlined.Pause else Icons.Outlined.PlayArrow, "Play", tint = Color.White, modifier = Modifier.size(34.dp))
-        }
-        IconBtn(Icons.Outlined.SkipNext, "Next", size = 36.dp) { onNext() }
-        Spacer(Modifier.weight(1f))
-        IconBtn(Icons.Outlined.ZoomIn, "Timeline zoom", NC.sub, 34.dp) { onZoom() }
-        IconBtn(Icons.Outlined.Undo, "Undo", if (undo.canUndo) Color.White else NC.dim, 34.dp) { onUndo() }
-        IconBtn(Icons.Outlined.Redo, "Redo", if (undo.canRedo) Color.White else NC.dim, 34.dp) { onRedo() }
     }
 }
 
@@ -681,33 +310,6 @@ fun TrackLabel(name: String, icon: ImageVector, hidden: Boolean, dimmed: Boolean
 }
 
 @Composable
-fun Ruler(totalMs: Long, zoom: Float, onSeek: (Long, Boolean) -> Unit, pxPerMs: Float) {
-    val step = if (zoom >= 100f) 1 else if (zoom >= 50f) 2 else if (zoom >= 25f) 5 else 10
-    val secs = (totalMs / 1000L).toInt() + 12
-    Box(
-        Modifier.fillMaxWidth().height(20.dp).pointerInput(zoom) {
-            var lastT = 0L
-            detectHorizontalDragGestures(
-                onDragEnd = { onSeek(lastT, false) },
-                onDragCancel = { onSeek(lastT, false) }
-            ) { change, _ ->
-                change.consume()
-                lastT = ((change.position.x - 8.dp.toPx()) / pxPerMs).toLong().coerceAtLeast(0L)
-                onSeek(lastT, true)
-            }
-        }
-    ) {
-        var s = 0
-        while (s <= secs) {
-            val x = (8f + s * zoom).dp
-            Box(Modifier.offset(x = x, y = 13.dp).width(1.dp).height(6.dp).background(NC.border))
-            Text(fmtClock(s * 1000L), color = NC.sub, fontSize = 8.sp, modifier = Modifier.offset(x = x + 2.dp, y = 2.dp))
-            s += step
-        }
-    }
-}
-
-@Composable
 fun FollowPlayhead(project: Project, scroll: ScrollState, pxPerMs: Float, viewW: Int, playing: Boolean) {
     val x = project.playheadMs * pxPerMs
     LaunchedEffect((x / 40f).toInt(), playing) {
@@ -715,72 +317,6 @@ fun FollowPlayhead(project: Project, scroll: ScrollState, pxPerMs: Float, viewW:
             scroll.scrollTo(maxOf(0, (x - viewW / 2f).toInt()))
         }
     }
-}
-
-@Composable
-fun TimelineBlock(
-    project: Project, selectedId: Long, zoom: Float, playing: Boolean, hidden: Set<Int>, compact: Boolean,
-    onSeek: (Long, Boolean) -> Unit, onSelectAt: (Long) -> Unit, onEye: (Int) -> Unit, onPlus: (Int) -> Unit
-) {
-    val scroll = rememberScrollState()
-    val density = LocalDensity.current
-    val pxPerMs = with(density) { (zoom / 1000f).dp.toPx() }
-    val names = listOf("Video 1", "Video 2", "Overlay", "Text", "Audio")
-    val icons = listOf(Icons.Outlined.Movie, Icons.Outlined.VideoLibrary, Icons.Outlined.Layers, Icons.Outlined.TextFields, Icons.Outlined.MusicNote)
-    val tracks = if (compact) 1 else 5
-    val contentW = ((project.totalMs / 1000f) * zoom + 200f).dp
-    var viewW by remember { mutableStateOf(0) }
-
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-        Column(Modifier.width(80.dp).padding(start = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Spacer(Modifier.height(20.dp))
-            for (i in 0 until tracks) {
-                TrackLabel(names[i], icons[i], hidden.contains(i), i != 0) { onEye(i) }
-            }
-        }
-        Box(Modifier.weight(1f).onSizeChanged { viewW = it.width }.horizontalScroll(scroll)) {
-            Box(
-                Modifier.width(contentW).pointerInput(project.clips.size, zoom) {
-                    detectTapGestures { off ->
-                        onSelectAt(((off.x - 8.dp.toPx()) / pxPerMs).toLong().coerceAtLeast(0L))
-                    }
-                }
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Ruler(project.totalMs, zoom, onSeek, pxPerMs)
-                    Row(Modifier.height(34.dp)) {
-                        Spacer(Modifier.width(8.dp))
-                        for (c in project.clips) {
-                            ClipBlock(c, c.id == selectedId, zoom)
-                        }
-                    }
-                    for (i in 1 until tracks) {
-                        Box(Modifier.fillMaxWidth().height(34.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xFF0B0C12)))
-                    }
-                }
-                Box(
-                    Modifier
-                        .offset { IntOffset((8.dp.toPx() + project.playheadMs * pxPerMs).toInt() - 1, 0) }
-                        .width(2.dp).fillMaxHeight()
-                        .drawBehind {
-                            drawLine(NC.redGlow, Offset(size.width / 2f, 0f), Offset(size.width / 2f, size.height), strokeWidth = size.width)
-                            drawCircle(NC.redGlow, radius = 5.dp.toPx(), center = Offset(size.width / 2f, 6.dp.toPx()))
-                        }
-                )
-            }
-        }
-        Column(Modifier.width(38.dp).padding(start = 2.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Spacer(Modifier.height(20.dp))
-            for (i in 0 until tracks) {
-                Box(
-                    Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)).background(NC.card2)
-                        .border(1.dp, NC.border, RoundedCornerShape(8.dp)).clickable { onPlus(i) },
-                    contentAlignment = Alignment.Center
-                ) { Text("+", color = Color.White, fontSize = 18.sp) }
-            }
-        }
-    }
-    FollowPlayhead(project, scroll, pxPerMs, viewW, playing)
 }
 
 @Composable
@@ -863,14 +399,14 @@ fun EditPanel(
 }
 
 @Composable
-fun FiltersPanel(clip: Clip?, library: List<NeoEffect>, project: Project, undo: UndoStack) {
+fun FiltersPanel(clip: Item?, library: List<NeoEffect>, project: Project, undo: UndoStack) {
     if (clip == null) {
         Text("Select a clip first.", color = NC.sub, modifier = Modifier.padding(16.dp))
         return
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(10.dp)) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(library.filter { it.category == "Color" && it.id != "color_grade" }) { e ->
+            items(library.filter { it.category == "Color" && it.id != "color_grade" && it.shader.isNotBlank() }) { e ->
                 NeoChip(e.name, clip.fx.any { it.effect.id == e.id }) {
                     undo.push()
                     val ex = clip.fx.firstOrNull { it.effect.id == e.id }
@@ -887,7 +423,7 @@ fun FiltersPanel(clip: Clip?, library: List<NeoEffect>, project: Project, undo: 
 }
 
 @Composable
-fun AdjustPanel(clip: Clip?, library: List<NeoEffect>, project: Project, undo: UndoStack) {
+fun AdjustPanel(clip: Item?, library: List<NeoEffect>, project: Project, undo: UndoStack) {
     if (clip == null) {
         Text("Select a clip first.", color = NC.sub, modifier = Modifier.padding(16.dp))
         return

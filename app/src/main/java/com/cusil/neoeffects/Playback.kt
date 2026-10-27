@@ -90,9 +90,73 @@ class PlaybackEngine(private val ctx: Context, val project: Project, private val
     }
 
     fun show(tMs: Long, fast: Boolean = false) {
+        showMain(tMs, fast)
+        syncAudio()
+    }
+
+    private val audioPlayers = HashMap<Long, MediaPlayer>()
+    private val audioReady = HashSet<Long>()
+    private var audioAcc = 0L
+
+    fun syncAudio() {
+        val t = project.playheadMs
+        val ids = project.layers.map { it.id }.toSet()
+        for (k in audioPlayers.keys.toList()) {
+            if (!ids.contains(k)) {
+                try { audioPlayers[k]?.release() } catch (e: Exception) { }
+                audioPlayers.remove(k)
+                audioReady.remove(k)
+            }
+        }
+        val opP = TRANSFORM_FX.params[6]
+        for (l in project.layers) {
+            if (l.type != "audio") continue
+            val active = t >= l.startMs && t < l.startMs + l.lenMs
+            var p = audioPlayers[l.id]
+            if (!active) {
+                if (p != null) {
+                    try { if (p.isPlaying) p.pause() } catch (e: Exception) { }
+                }
+                continue
+            }
+            if (p == null) {
+                val np = MediaPlayer()
+                try {
+                    np.setDataSource(ctx, Uri.parse(l.uri))
+                    np.setOnPreparedListener {
+                        audioReady.add(l.id)
+                        syncAudio()
+                    }
+                    np.prepareAsync()
+                } catch (e: Exception) {
+                }
+                audioPlayers[l.id] = np
+                p = np
+            }
+            if (!audioReady.contains(l.id)) continue
+            try {
+                val want = t - l.startMs
+                val vol = l.tr.valueAt(opP, want).coerceIn(0f, 1f)
+                p.setVolume(vol, vol)
+                if (wantPlay) {
+                    if (!p.isPlaying) {
+                        p.seekTo(want.toInt())
+                        p.start()
+                    } else if (Math.abs(p.currentPosition - want) > 400L) {
+                        p.seekTo(want.toInt())
+                    }
+                } else if (p.isPlaying) {
+                    p.pause()
+                }
+            } catch (e: Exception) {
+            }
+        }
+    }
+
+    private fun showMain(tMs: Long, fast: Boolean) {
         val total = project.totalMs
         project.playheadMs = tMs.coerceIn(0L, total)
-        val loc = project.clipAt(project.playheadMs)
+        val loc = if (project.playheadMs >= project.clipsMs && project.clips.isNotEmpty()) null else project.clipAt(project.playheadMs)
         if (loc == null) {
             releasePlayer()
             gl.clear()
@@ -212,12 +276,18 @@ class PlaybackEngine(private val ctx: Context, val project: Project, private val
         wantPlay = false
         playing = false
         pauseMp()
+        syncAudio()
     }
 
     fun tick(dtMs: Long) {
         if (!playing) return
         val total = project.totalMs
         val next = project.playheadMs + dtMs
+        audioAcc += dtMs
+        if (audioAcc >= 100L) {
+            audioAcc = 0L
+            syncAudio()
+        }
         if (next >= total) {
             project.playheadMs = total
             pause()
@@ -240,6 +310,11 @@ class PlaybackEngine(private val ctx: Context, val project: Project, private val
 
     fun releaseAll() {
         releasePlayer()
+        for (ap in audioPlayers.values) {
+            try { ap.release() } catch (e: Exception) { }
+        }
+        audioPlayers.clear()
+        audioReady.clear()
         photos.clear()
     }
 }

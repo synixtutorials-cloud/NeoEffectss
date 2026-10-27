@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -30,6 +31,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +55,7 @@ fun NeoApp() {
     var labInitial by remember { mutableStateOf<NeoEffect?>(null) }
     var showPro by remember { mutableStateOf(false) }
     var showBell by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     val effects = remember { mutableStateListOf<NeoEffect>().apply { addAll(EffectStore.load(ctx)) } }
 
     val gradePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -79,6 +83,15 @@ fun NeoApp() {
             gradePicker.launch(arrayOf("video/*", "image/*"))
         } else {
             screen = k
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val now = System.currentTimeMillis()
+        if (Prefs.updateAlerts(ctx) && now - Prefs.lastCheck(ctx) > 6L * 3600L * 1000L) {
+            Prefs.setLastCheck(ctx, now)
+            val r = withContext(Dispatchers.IO) { Updater.check(ctx) }
+            if (r.first != null) updateInfo = r.first
         }
     }
 
@@ -124,7 +137,7 @@ fun NeoApp() {
                     val p = project
                     if (p != null) {
                         key(p.id) {
-                            EditorScreen(p, effects, editorTab, { screen = "home" }, { showPro = true })
+                            EditorScreen(p, effects, editorTab, { screen = "home" }, { showPro = true }, { screen = "import_fx" })
                         }
                     }
                 }
@@ -140,7 +153,7 @@ fun NeoApp() {
                     screen = "newproject"
                 }
                 "profile" -> ProfileScreen(effects, { showPro = true }, { screen = "settings" })
-                "settings" -> SettingsScreen { screen = "home" }
+                "settings" -> SettingsScreen({ screen = "home" }, { screen = "import_fx" })
                 "tutorial" -> TutorialScreen { screen = "home" }
                 "removebg" -> RemoveBgScreen({ screen = "home" }, { showPro = true })
                 "quality" -> EnhancerScreen({ screen = "home" }, { showPro = true })
@@ -176,6 +189,8 @@ fun NeoApp() {
     }
 
     if (showPro) ProDialog { showPro = false }
+    val ui = updateInfo
+    if (ui != null) UpdateDialog(ui) { updateInfo = null }
     if (showBell) {
         AlertDialog(
             onDismissRequest = { showBell = false },

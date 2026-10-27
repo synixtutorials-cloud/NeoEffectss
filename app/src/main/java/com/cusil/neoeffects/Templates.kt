@@ -62,7 +62,7 @@ val TEMPLATES = listOf(
     )
 )
 
-fun applyTemplate(id: String, clip: Clip, lib: List<NeoEffect>) {
+fun applyTemplate(id: String, clip: Item, lib: List<NeoEffect>) {
     val t = TEMPLATES.firstOrNull { it.id == id } ?: return
     for ((eid, over) in t.fx) {
         val e = lib.firstOrNull { it.id == eid } ?: continue

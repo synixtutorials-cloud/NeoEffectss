@@ -1,0 +1,1 @@
+{"neofx":2,"id":"ring_warp","name":"Ring Warp","category":"Distort","params":[{"id":"amount","name":"Amount","min":0,"max":1,"default":1}],"shader":"vec4 effect(vec2 uv) { vec2 p = uv - vec2(0.5, 0.5); float r = length(p) * 2.0; float a = atan(p.y, p.x + 0.00001) / 6.2831853 + 0.5; return texture2D(image, mix(uv, fract(vec2(a, r)), amount)); }"}

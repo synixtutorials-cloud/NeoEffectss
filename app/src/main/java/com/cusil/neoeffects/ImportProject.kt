@@ -69,7 +69,7 @@ import java.util.zip.ZipOutputStream
 
 class NeoprojItem(val uri: Uri, val name: String, val size: Long, val dateSec: Long)
 
-private fun safeName(s: String): String {
+fun safeName(s: String): String {
     val t = s.replace(Regex("[^A-Za-z0-9._-]"), "_")
     return if (t.isEmpty()) "file" else t.take(60)
 }
@@ -105,25 +105,7 @@ fun exportNeoproj(ctx: Context, p: Project): String {
         val map = HashMap<String, String>()
         val tmp = File(ctx.cacheDir, p.id + ".neoproj")
         ZipOutputStream(BufferedOutputStream(FileOutputStream(tmp))).use { zos ->
-            val clips = json.getJSONArray("clips")
-            var n = 0
-            for (i in 0 until clips.length()) {
-                val co = clips.getJSONObject(i)
-                val uri = co.getString("uri")
-                val existing = map[uri]
-                if (existing != null) {
-                    co.put("uri", existing)
-                    continue
-                }
-                val ins = ctx.contentResolver.openInputStream(Uri.parse(uri)) ?: continue
-                n++
-                val rel = "media/" + n + "_" + safeName(co.optString("name", "clip"))
-                zos.putNextEntry(ZipEntry(rel))
-                ins.use { it.copyTo(zos) }
-                zos.closeEntry()
-                map[uri] = rel
-                co.put("uri", rel)
-            }
+            packUris(ctx, json, zos, map, "")
             zos.putNextEntry(ZipEntry("project.json"))
             zos.write(json.toString().toByteArray(Charsets.UTF_8))
             zos.closeEntry()
@@ -160,12 +142,7 @@ fun importNeoproj(ctx: Context, uri: Uri, lib: List<NeoEffect>): Project? {
         }
         val text = js ?: return null
         val o = JSONObject(text)
-        val cs = o.getJSONArray("clips")
-        for (i in 0 until cs.length()) {
-            val co = cs.getJSONObject(i)
-            val u = co.getString("uri")
-            if (u.startsWith("media/")) co.put("uri", Uri.fromFile(File(dir, u)).toString())
-        }
+        rewriteMedia(o, dir)
         o.put("id", newId)
         o.put("name", o.optString("name", "Project") + " (imported)")
         val p = ProjectStore.fromJson(o, lib)

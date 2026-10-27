@@ -54,6 +54,7 @@ fun chipOf(e: NeoEffect): String = when (e.category) {
     "Color", "Grade" -> "Color"
     "Retro" -> "TV"
     "Stylize", "Detail", "Cinematic" -> "Stylize"
+    "Key", "Transition", "Animate" -> "Other"
     else -> "Other"
 }
 
@@ -95,7 +96,7 @@ fun ImportEffectsScreen(
         }
     }
     val chips = listOf("All", "Shake", "Blur", "Glitch", "Distortion", "Color", "TV", "Stylize", "Other")
-    val shown = effects.filter { it.id != "color_grade" && (chip == "All" || chipOf(it) == chip) }
+    val shown = effects.filter { it.shader.isNotBlank() && it.id != "color_grade" && it.id != "enhance" && (chip == "All" || chipOf(it) == chip) }
     val rows = shown.chunked(3)
     val mine = effects.filter { !it.builtIn }
     val packCats = listOf("Glitch", "Light", "Distort", "Color", "Blur", "Motion")

@@ -27,7 +27,7 @@ object NeoFx {
     const val PASSTHROUGH = "vec4 effect(vec2 uv) { return texture2D(image, uv); }"
 
     private val BAD_IDS = setOf(
-        "image", "resolution", "time", "aPos", "uFlip", "vUv", "gl_FragColor",
+        "image", "resolution", "time", "ctime", "cdur", "aPos", "uFlip", "vUv", "gl_FragColor",
         "input", "output", "sample", "half", "fixed", "long", "short", "double", "unsigned",
         "class", "union", "enum", "default", "switch", "goto", "static", "extern", "inline",
         "volatile", "public", "interface", "template", "this", "packed", "asm", "namespace",
@@ -50,7 +50,7 @@ object NeoFx {
         var s = code
         s = Regex("precision\\s+(lowp|mediump|highp)\\s+\\w+\\s*;").replace(s, " ")
         s = Regex("varying\\s+(highp\\s+|mediump\\s+|lowp\\s+)?vec2\\s+vUv\\s*;").replace(s, " ")
-        val names = listOf("image", "resolution", "time") + paramIds
+        val names = listOf("image", "resolution", "time", "ctime", "cdur") + paramIds
         for (n in names) {
             s = Regex("uniform\\s+(highp\\s+|mediump\\s+|lowp\\s+)?(sampler2D|vec2|float)\\s+" + n + "\\s*;").replace(s, " ")
         }
@@ -60,7 +60,7 @@ object NeoFx {
     fun fragment(code: String, params: List<NeoParam>): String {
         val sb = StringBuilder()
         sb.append("#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n")
-        sb.append("uniform sampler2D image;\nuniform vec2 resolution;\nuniform float time;\nvarying vec2 vUv;\n")
+        sb.append("uniform sampler2D image;\nuniform vec2 resolution;\nuniform float time;\nuniform float ctime;\nuniform float cdur;\nvarying vec2 vUv;\n")
         for (p in params) {
             sb.append("uniform float ").append(p.id).append(";\n")
         }
@@ -170,6 +170,8 @@ object EffectStore {
                 }
             }
         }
+        out.add(TRANSFORM_FX)
+        out.addAll(VIRTUAL_FX)
         return out
     }
 
@@ -236,3 +238,33 @@ Now write the effect I describe. Output only the JSON.
 
 The effect I want:
 """
+
+private fun vfx(id: String, name: String, cat: String, vararg p: NeoParam) = NeoEffect(id, name, cat, p.toList(), "", true)
+
+val TRANSFORM_FX = vfx(
+    "transform", "Transform", "Transform",
+    NeoParam("posx", "Position X", -1.5f, 1.5f, 0f),
+    NeoParam("posy", "Position Y", -1.5f, 1.5f, 0f),
+    NeoParam("scale", "Scale", 0f, 4f, 1f),
+    NeoParam("rotz", "Rotation", -360f, 360f, 0f),
+    NeoParam("rotx", "3D Rotate X", -180f, 180f, 0f),
+    NeoParam("roty", "3D Rotate Y", -180f, 180f, 0f),
+    NeoParam("opacity", "Opacity", 0f, 1f, 1f)
+)
+
+val VIRTUAL_FX = listOf(
+    vfx("auto_shake", "Auto Shake", "Animate", NeoParam("amount", "Amount", 0f, 0.3f, 0.04f), NeoParam("speed", "Speed", 0.1f, 30f, 8f)),
+    vfx("oscillate", "Oscillate", "Animate", NeoParam("ampx", "Amount X", 0f, 1f, 0.1f), NeoParam("ampy", "Amount Y", 0f, 1f, 0f), NeoParam("freq", "Frequency", 0.1f, 10f, 1f)),
+    vfx("pulse_size", "Pulse Size", "Animate", NeoParam("amount", "Amount", 0f, 1f, 0.1f), NeoParam("freq", "Frequency", 0.1f, 10f, 2f)),
+    vfx("random_jitter", "Random Jitter", "Animate", NeoParam("amount", "Amount", 0f, 0.3f, 0.03f), NeoParam("rate", "Rate", 1f, 60f, 12f)),
+    vfx("random_displacement", "Random Displacement", "Animate", NeoParam("amount", "Amount", 0f, 1f, 0.1f), NeoParam("rate", "Rate", 0.1f, 10f, 1f)),
+    vfx("offset", "Offset", "Animate", NeoParam("offx", "Offset X", -1f, 1f, 0.1f), NeoParam("offy", "Offset Y", -1f, 1f, 0f)),
+    vfx("stretch_axis", "Stretch Axis", "Animate", NeoParam("stx", "Stretch X", 0.1f, 4f, 1.4f), NeoParam("sty", "Stretch Y", 0.1f, 4f, 1f)),
+    vfx("spin", "Spin", "Animate", NeoParam("speed", "Degrees / sec", -720f, 720f, 90f)),
+    vfx("swing", "Swing", "Animate", NeoParam("angle", "Angle", 0f, 180f, 20f), NeoParam("freq", "Frequency", 0.1f, 10f, 1f)),
+    vfx("flip_layer", "Flip Layer", "Animate", NeoParam("speed", "Degrees / sec", -720f, 720f, 180f)),
+    vfx("linear_repeat", "Linear Repeat", "Repeat", NeoParam("count", "Copies", 1f, 12f, 5f), NeoParam("dx", "Step X", -0.5f, 0.5f, 0.12f), NeoParam("dy", "Step Y", -0.5f, 0.5f, 0f), NeoParam("rot", "Rotate step", -45f, 45f, 0f), NeoParam("scl", "Scale step", 0.5f, 1.5f, 1f), NeoParam("fade", "Fade", 0f, 1f, 0.12f)),
+    vfx("radial_repeat", "Radial Repeat", "Repeat", NeoParam("count", "Copies", 2f, 16f, 6f), NeoParam("radius", "Radius", 0f, 1f, 0.35f), NeoParam("scl", "Copy scale", 0.1f, 1.5f, 0.5f)),
+    vfx("grid_repeat", "Grid Repeat", "Repeat", NeoParam("cols", "Columns", 1f, 6f, 3f), NeoParam("rows", "Rows", 1f, 6f, 3f), NeoParam("space", "Spacing", 0.1f, 1f, 0.5f), NeoParam("scl", "Copy scale", 0.1f, 1.5f, 0.4f)),
+    vfx("scatter_repeat", "Scatter Repeat", "Repeat", NeoParam("count", "Copies", 1f, 20f, 8f), NeoParam("area", "Area", 0.1f, 1.5f, 0.8f), NeoParam("scl", "Copy scale", 0.1f, 1.5f, 0.4f), NeoParam("seed", "Seed", 0f, 99f, 7f))
+)

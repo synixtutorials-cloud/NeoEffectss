@@ -403,7 +403,7 @@ fun RemoveBgScreen(onBack: () -> Unit, onPro: () -> Unit) {
                 msg = "Loading photo..."
                 val pair = withContext(Dispatchers.Default) {
                     try {
-                        val f = loadBitmap(ctx, uri, 2048)
+                        val f = loadBitmap(ctx, uri, 3072)
                         if (f == null) {
                             null
                         } else {
@@ -459,7 +459,7 @@ fun RemoveBgScreen(onBack: () -> Unit, onPro: () -> Unit) {
             busy = true
             val res = withContext(Dispatchers.Default) {
                 try {
-                    renderCutout(f, cut.mask, cut.w, cut.h, if (quality == 0) 1024 else 2048, bgMode, solid.toArgb(), customBmp)
+                    renderCutout(f, cut.mask, cut.w, cut.h, when (quality) { 0 -> 1024; 1 -> 2048; else -> 3072 }, bgMode, solid.toArgb(), customBmp)
                 } catch (e: Exception) {
                     null
                 }
@@ -688,7 +688,7 @@ fun RemoveBgScreen(onBack: () -> Unit, onPro: () -> Unit) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     NeoChip("Normal", quality == 0) { quality = 0 }
                     NeoChip("High", quality == 1) { quality = 1 }
-                    NeoChip("Ultra HD  👑", false) { showPro = true }
+                    NeoChip("Ultra HD", quality == 2) { quality = 2 }
                 }
             }
             GradeCard("AI Remove Background", trailing = {

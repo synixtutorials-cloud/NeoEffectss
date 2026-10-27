@@ -58,6 +58,10 @@ val EFF_CATS = listOf(
     EffCat("color", "Color", "🎨"),
     EffCat("light", "Light", "💡"),
     EffCat("shake", "Shake", "📳"),
+    EffCat("animate", "Animate", "🎬"),
+    EffCat("repeat", "Repeat", "🔁"),
+    EffCat("key", "Key", "🎭"),
+    EffCat("trans", "Wipe", "🌗"),
     EffCat("3d", "3D", "🧊")
 )
 
@@ -73,6 +77,10 @@ fun effCatOf(e: NeoEffect): String = when (e.category) {
     "Distort" -> "distortion"
     "Color" -> "color"
     "Light" -> "light"
+    "Animate" -> "animate"
+    "Repeat" -> "repeat"
+    "Key" -> "key"
+    "Transition" -> "trans"
     else -> "basic"
 }
 
@@ -115,7 +123,7 @@ fun EffectCard(e: NeoEffect, applied: Boolean, active: Boolean, onClick: () -> U
 
 @Composable
 fun EffectsSheet(
-    clip: Clip?,
+    clip: Item?,
     library: List<NeoEffect>,
     project: Project,
     undo: UndoStack,
@@ -125,7 +133,7 @@ fun EffectsSheet(
 ) {
     var cat by remember { mutableStateOf("trending") }
     var query by remember { mutableStateOf("") }
-    val all = library.filter { it.id != "color_grade" }
+    val all = library.filter { it.id != "color_grade" && it.id != "transform" && it.id != "enhance" }
     val list = all.filter { e ->
         val inCat = if (query.isNotBlank()) true else if (cat == "trending") TRENDING.contains(e.id) else effCatOf(e) == cat
         val inQ = query.isBlank() || e.name.contains(query, ignoreCase = true)
@@ -181,7 +189,7 @@ fun EffectsSheet(
                 Text("Select a clip in the timeline first.", color = NC.sub, modifier = Modifier.align(Alignment.Center))
             } else if (list.isEmpty()) {
                 Text(
-                    if (cat == "3d" && query.isBlank()) "3D effects are coming soon." else "No effects found.",
+                    if (cat == "3d" && query.isBlank()) "For 3D shapes (cube, sphere, torus...) open a clip or layer, then Transform > 3D shape." else "No effects found.",
                     color = NC.sub, modifier = Modifier.align(Alignment.Center)
                 )
             } else {
