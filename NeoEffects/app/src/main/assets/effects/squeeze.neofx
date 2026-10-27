@@ -1,0 +1,1 @@
+{"neofx":2,"id":"squeeze","name":"Squeeze","category":"Distort","params":[{"id":"amount","name":"Amount","min":-1,"max":1,"default":0.4}],"shader":"vec4 effect(vec2 uv) { vec2 p = uv - vec2(0.5, 0.5); float k = 1.0 + amount * (1.0 - 4.0 * p.y * p.y); p.x *= k; return texture2D(image, p + vec2(0.5, 0.5)); }"}

@@ -1,0 +1,1 @@
+{"neofx":2,"id":"feather","name":"Feather","category":"Animate","params":[{"id":"amount","name":"Amount","min":0,"max":0.5,"default":0.1}],"shader":"vec4 effect(vec2 uv) { vec4 c = texture2D(image, uv); float d = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y)); return c * smoothstep(0.0, amount + 0.0001, d); }"}
